@@ -1,11 +1,13 @@
 #include <Keypad.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <AESLib.h>
 
 #define RELAY_PIN 13
 #define LASER_PIN 12
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+AESLib aesLib;
 
 // Keypad config
 const byte ROWS = 4;
@@ -25,6 +27,9 @@ String correctPassword = "1234";
 bool authenticated = false;
 bool textModeSelected = false;
 int page = 0;  // 0 = first menu (1,2), 1 = second menu (3,4)
+
+byte aesKey[] = {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45}; // 128-bit key
+byte aesIv[]  = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 void setup() {
   Wire.begin(21, 22);
@@ -105,10 +110,10 @@ void handleModeSelection(char key) {
 }
 
 void handleTextMenu(char key) {
-  if (key == 'D') {  // Scroll DOWN
+  if (key == 'D') {
     page = min(page + 1, 1);
     showMenu();
-  } else if (key == 'C') {  // Scroll UP
+  } else if (key == 'C') {
     page = max(page - 1, 0);
     showMenu();
   } else if (key == '1') {
@@ -129,7 +134,7 @@ void showMenu() {
     lcd.print("1:HELLO ESP");
     lcd.setCursor(0, 1);
     lcd.print("2:EMERGENCY");
-  } else if (page == 1) {
+  } else {
     lcd.setCursor(0, 0);
     lcd.print("3:SEND HELP");
     lcd.setCursor(0, 1);
@@ -137,38 +142,41 @@ void showMenu() {
   }
 }
 
-void transmitText(String text) {
+void transmitText(String plainText) {
+  lcd.clear();
+  lcd.print("Encrypting...");
+
+  char encrypted[128];
+  int len = aesLib.encrypt(plainText.c_str(), plainText.length(), encrypted, aesKey, aesIv);
+
   lcd.clear();
   lcd.print("Transmitting...");
   digitalWrite(RELAY_PIN, LOW);
   delay(500);
-  
-  sendText(text);
-  
+
+  for (int i = 0; i < len; i++) {
+    sendChar(encrypted[i]);
+    delay(170);
+  }
+  digitalWrite(LASER_PIN, LOW);
+
   digitalWrite(RELAY_PIN, HIGH);
   lcd.clear();
   lcd.print("Done!");
   delay(2000);
   lcd.clear();
   lcd.print("Enter Password:");
-  
-  authenticated = false;      // Force logout after transmit
+
+  authenticated = false;
   textModeSelected = false;
   page = 0;
-}
-
-void sendText(String text) {
-  for (int i = 0; i < text.length(); i++) {
-    sendChar(text[i]);
-    delay(170);
-  }
-  digitalWrite(LASER_PIN, LOW);
 }
 
 void sendChar(char c) {
   for (int i = 7; i >= 0; i--) {
     bool bit = (c >> i) & 1;
     digitalWrite(LASER_PIN, bit);
-    delay(150);
+    delayMicroseconds(3333);  // For 300 bits per second
   }
 }
+
