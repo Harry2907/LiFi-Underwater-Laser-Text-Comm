@@ -1,19 +1,22 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <Keypad.h>
+#include <AESLib.h>
 
 #define LDR_PIN 14
-#define BIT_DURATION 170
-#define CHAR_SPACING 250
+#define BIT_DURATION 3333  // in microseconds, for 300 bps
+#define CHAR_BITS 8
+#define MAX_MSG_LEN 64
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-String currentMessage = "";
+AESLib aesLib;
+
+String encryptedBuffer = "";
 String correctPassword = "1234";
 String inputBuffer = "";
 bool messageAvailable = false;
-bool awaitingPassword = false;
+bool authenticated = false;
 
-// Keypad setup
 const byte ROWS = 4;
 const byte COLS = 4;
 char keys[ROWS][COLS] = {
@@ -26,46 +29,32 @@ byte rowPins[ROWS] = {19, 18, 5, 23};
 byte colPins[COLS] = {27, 14, 4, 15};
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
+byte aesKey[] = {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45};
+byte aesIv[]  = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
 void setup() {
   Serial.begin(9600);
   pinMode(LDR_PIN, INPUT);
   lcd.init();
   lcd.backlight();
   lcd.setCursor(0, 0);
-  lcd.print("Enter Password:");
-  lcd.setCursor(0, 1);
+  lcd.print("Waiting Msg...");
 }
 
 void loop() {
-  if (!messageAvailable) {
-    if (digitalRead(LDR_PIN) == LOW) {
-      delay(BIT_DURATION / 2);
-      currentMessage = "";
-
-      while (digitalRead(LDR_PIN) == LOW) {
-        String bitString = "";
-
-        for (int i = 0; i < 8; i++) {
-          int bit = digitalRead(LDR_PIN) == LOW ? 1 : 0;
-          bitString += String(bit);
-          delay(BIT_DURATION);
-        }
-
-        Serial.print("Received: ");
-        Serial.println(bitString);
-
-        char receivedChar = decode(bitString);
-        Serial.print("Char: ");
-        Serial.println(receivedChar);
-
-        currentMessage += receivedChar;
-        delay(CHAR_SPACING);
-      }
-
-      messageAvailable = true;
-      lcd.setCursor(15, 0);  // Right corner of first row
-      lcd.print("!");
+  if (!messageAvailable && detectStart()) {
+    encryptedBuffer = "";
+    while (true) {
+      char ch = receiveChar();
+      if (ch == '\0') break;
+      encryptedBuffer += ch;
     }
+    messageAvailable = true;
+    lcd.clear();
+    lcd.print("Msg Received!");
+    delay(1000);
+    lcd.clear();
+    lcd.print("Enter Password:");
   }
 
   if (messageAvailable) {
@@ -87,9 +76,14 @@ void loop() {
       if (inputBuffer.length() == correctPassword.length()) {
         lcd.clear();
         if (inputBuffer == correctPassword) {
+          char decrypted[MAX_MSG_LEN];
+          int len = aesLib.decrypt((char*)encryptedBuffer.c_str(), encryptedBuffer.length(), decrypted, aesKey, aesIv);
+          decrypted[len] = '\0';
+
+          lcd.setCursor(0, 0);
           lcd.print("Msg:");
           lcd.setCursor(0, 1);
-          lcd.print(currentMessage.substring(0, 16));
+          lcd.print(String(decrypted).substring(0, 16));
           delay(4000);
         } else {
           lcd.print("Wrong Password");
@@ -97,28 +91,28 @@ void loop() {
         }
 
         lcd.clear();
-        lcd.print("Enter Password:");
-        lcd.setCursor(0, 1);
-        lcd.print("                ");
+        lcd.print("Waiting Msg...");
         inputBuffer = "";
-        currentMessage = "";
+        encryptedBuffer = "";
         messageAvailable = false;
       }
     }
   }
 }
 
-char decode(String bits) {
-  if (bits == "10010000") return 'H';
-  else if (bits == "10001011" || bits == "10001010" || bits == "10100011") return 'E';
-  else if (bits == "10011000" || bits == "11000010") return 'L';
-  else if (bits == "10011111" || bits == "10011110") return 'O';
-  else if (bits == "10000000" || bits == "10100000") return 'P';
-  else if (bits == "10100110" || bits == "01001111") return 'S';
-  else if (bits == "10100100") return 'R';
-  else if (bits == "10000010") return 'A';
-  else if (bits == "10101000") return 'T';
-  else if (bits == "10000110") return 'C';
-  else if (bits == "10010110") return 'K';
-  else return '?';
+bool detectStart() {
+  return digitalRead(LDR_PIN) == LOW;
+}
+
+char receiveChar() {
+  byte val = 0;
+  for (int i = 7; i >= 0; i--) {
+    int bit = digitalRead(LDR_PIN) == LOW ? 1 : 0;
+    val |= (bit << i);
+    delayMicroseconds(BIT_DURATION);
+  }
+
+  // Assume 0x00 as termination signal
+  if (val == 0x00) return '\0';
+  return (char)val;
 }
