@@ -22,7 +22,7 @@ Laser light is used to transmit text messages underwater, with a custom binary e
 
 <ul>
   <li>🔒 Secure and password-protected</li>
-  <li>💡 Custom text-to-binary protocol</li>
+  <li>💡 AES-128 encryption</li>
   <li>🔴 Laser diode + photodiode for physical layer</li>
   <li>🧠 Fully hardware-based (no PC required)</li>
 </ul>
